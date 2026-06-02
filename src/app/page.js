@@ -1,6 +1,8 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import html2canvas from 'html2canvas';
+import jsPDF from 'jspdf';
 
 export default function Home() {
   // --- State Management ---
@@ -12,6 +14,9 @@ export default function Home() {
   ]);
   const [showMobileDetails, setShowMobileDetails] = useState(true);
   const [mounted, setMounted] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
+  
+  const pdfContentRef = useRef(null);
 
   useEffect(() => {
     setMounted(true);
@@ -26,8 +31,10 @@ export default function Home() {
       const equalShare = products.length > 0 ? shippingCost / products.length : 0;
       return products.map(p => ({
         ...p,
+        subtotal: p.qty * p.price,
         allocatedShipping: equalShare,
-        landedPerUnit: p.qty > 0 ? (p.qty * p.price + equalShare) / p.qty : 0
+        landedPerUnit: p.qty > 0 ? (p.qty * p.price + equalShare) / p.qty : 0,
+        totalLandedCost: p.qty > 0 ? (p.qty * p.price + equalShare) : 0
       }));
     }
     return products.map(p => {
@@ -35,7 +42,14 @@ export default function Home() {
       const allocationRatio = subtotal / totalItemValue;
       const allocatedShipping = shippingCost * allocationRatio;
       const landedPerUnit = p.qty > 0 ? (subtotal + allocatedShipping) / p.qty : 0;
-      return { ...p, allocatedShipping, landedPerUnit };
+      const totalLandedCost = subtotal + allocatedShipping;
+      return { 
+        ...p, 
+        subtotal, 
+        allocatedShipping, 
+        landedPerUnit,
+        totalLandedCost
+      };
     });
   };
 
@@ -74,6 +88,308 @@ export default function Home() {
     setShowMobileDetails(prev => !prev);
   };
 
+  // --- Professional PDF Download Function ---
+  const downloadPDF = async () => {
+    setIsDownloading(true);
+    
+    try {
+      // Create a temporary div for PDF content
+      const pdfContainer = document.createElement('div');
+      pdfContainer.style.backgroundColor = 'white';
+      pdfContainer.style.padding = '40px';
+      pdfContainer.style.fontFamily = 'Hanken Grotesk, sans-serif';
+      pdfContainer.style.maxWidth = '800px';
+      pdfContainer.style.margin = '0 auto';
+      
+      // Build the PDF HTML content
+      pdfContainer.innerHTML = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <style>
+            * {
+              margin: 0;
+              padding: 0;
+              box-sizing: border-box;
+            }
+            body {
+              font-family: 'Hanken Grotesk', sans-serif;
+              padding: 40px;
+              color: #191c1e;
+            }
+            .header {
+              text-align: center;
+              margin-bottom: 30px;
+              padding-bottom: 20px;
+              border-bottom: 2px solid #006a61;
+            }
+            .header h1 {
+              color: #000000;
+              font-size: 28px;
+              margin-bottom: 8px;
+            }
+            .header p {
+              color: #45464d;
+              font-size: 12px;
+            }
+            .company-info {
+              display: flex;
+              justify-content: space-between;
+              margin-bottom: 30px;
+              padding: 15px;
+              background: #f7f9fb;
+              border-radius: 8px;
+            }
+            .summary-cards {
+              display: grid;
+              grid-template-columns: repeat(3, 1fr);
+              gap: 20px;
+              margin-bottom: 30px;
+            }
+            .card {
+              background: linear-gradient(135deg, #004d40 0%, #006a61 100%);
+              color: white;
+              padding: 20px;
+              border-radius: 12px;
+              text-align: center;
+            }
+            .card-label {
+              font-size: 11px;
+              text-transform: uppercase;
+              letter-spacing: 1px;
+              opacity: 0.8;
+              margin-bottom: 8px;
+            }
+            .card-value {
+              font-size: 24px;
+              font-weight: 700;
+            }
+            .products-table {
+              width: 100%;
+              border-collapse: collapse;
+              margin-bottom: 30px;
+            }
+            .products-table th {
+              background: #006a61;
+              color: white;
+              padding: 12px;
+              text-align: left;
+              font-size: 12px;
+              font-weight: 600;
+              text-transform: uppercase;
+              letter-spacing: 0.5px;
+            }
+            .products-table td {
+              padding: 10px 12px;
+              border-bottom: 1px solid #e2e8f0;
+              font-size: 13px;
+            }
+            .products-table tr:hover {
+              background: #f7f9fb;
+            }
+            .total-row {
+              background: #f0fdf4;
+              font-weight: 700;
+            }
+            .total-row td {
+              border-top: 2px solid #006a61;
+              font-weight: 700;
+            }
+            .shipping-section {
+              background: #f7f9fb;
+              padding: 20px;
+              border-radius: 12px;
+              margin-bottom: 30px;
+            }
+            .allocation-section {
+              background: #f7f9fb;
+              padding: 20px;
+              border-radius: 12px;
+              margin-top: 20px;
+            }
+            .allocation-item {
+              display: flex;
+              justify-content: space-between;
+              padding: 8px 0;
+              border-bottom: 1px solid #e2e8f0;
+            }
+            .footer {
+              text-align: center;
+              margin-top: 40px;
+              padding-top: 20px;
+              border-top: 1px solid #e2e8f0;
+              font-size: 11px;
+              color: #76777d;
+            }
+            .text-right {
+              text-align: right;
+            }
+            .font-bold {
+              font-weight: 700;
+            }
+            .text-primary {
+              color: #006a61;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>LANDED COST PRO</h1>
+            <p>Professional Landed Cost Calculation Report</p>
+          </div>
+
+          <div class="company-info">
+            <div>
+              <strong>Report Generated:</strong><br/>
+              ${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString()}
+            </div>
+            <div>
+              <strong>Document ID:</strong><br/>
+              LCP-${new Date().getFullYear()}${(new Date().getMonth() + 1).toString().padStart(2, '0')}${new Date().getDate().toString().padStart(2, '0')}-${Math.floor(Math.random() * 1000)}
+            </div>
+          </div>
+
+          <div class="summary-cards">
+            <div class="card">
+              <div class="card-label">Total Item Value</div>
+              <div class="card-value">${formatLKR(totalItemValue)}</div>
+            </div>
+            <div class="card">
+              <div class="card-label">Total Shipping Cost</div>
+              <div class="card-value">${formatLKR(shippingCost)}</div>
+            </div>
+            <div class="card">
+              <div class="card-label">Total Landed Value</div>
+              <div class="card-value">${formatLKR(totalLandedValue)}</div>
+            </div>
+          </div>
+
+          <h3 style="margin-bottom: 15px; color: #004d40;">PRODUCT DETAILS</h3>
+          <table class="products-table">
+            <thead>
+              <tr>
+                <th>Product Name</th>
+                <th class="text-right">Units</th>
+                <th class="text-right">Unit Price (LKR)</th>
+                <th class="text-right">Per Unit Cost (LKR)</th>
+                <th class="text-right">Total Item Cost (LKR)</th>
+                <th class="text-right">Total Landed Cost (LKR)</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${allocations.map(prod => `
+                <tr>
+                  <td><strong>${prod.name}</strong></td>
+                  <td class="text-right">${prod.qty.toLocaleString()}</td>
+                  <td class="text-right">${formatLKR(prod.price)}</td>
+                  <td class="text-right">${formatLKRWithDecimals(prod.landedPerUnit)}</td>
+                  <td class="text-right">${formatLKR(prod.subtotal)}</td>
+                  <td class="text-right">${formatLKR(prod.totalLandedCost)}</td>
+                </tr>
+              `).join('')}
+              <tr class="total-row">
+                <td colspan="4" class="text-right font-bold">TOTALS:</td>
+                <td class="text-right font-bold">${formatLKR(totalItemValue)}</td>
+                <td class="text-right font-bold">${formatLKR(totalLandedValue)}</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="shipping-section">
+            <h3 style="margin-bottom: 15px; color: #004d40;">SHIPPING COST BREAKDOWN</h3>
+            <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+              <span>Base Shipping Cost:</span>
+              <span class="font-bold">${formatLKR(shippingCost)}</span>
+            </div>
+            <div style="display: flex; justify-content: space-between;">
+              <span>Allocation Method:</span>
+              <span>Proportional to Product Value</span>
+            </div>
+          </div>
+
+          <div class="allocation-section">
+            <h3 style="margin-bottom: 15px; color: #004d40;">SHIPPING ALLOCATION PER PRODUCT</h3>
+            ${allocations.map(prod => `
+              <div class="allocation-item">
+                <span><strong>${prod.name}</strong> (${prod.qty} units)</span>
+                <span>Shipping: ${formatLKR(prod.allocatedShipping)} | Landed/Unit: ${formatLKRWithDecimals(prod.landedPerUnit)}</span>
+              </div>
+            `).join('')}
+          </div>
+
+          <div class="footer">
+            <p>This is a computer-generated document. No signature is required.</p>
+            <p>Landed Cost Pro - Precision Finance Dashboard</p>
+          </div>
+        </body>
+        </html>
+      `;
+
+      // Temporarily add to body to measure
+      document.body.appendChild(pdfContainer);
+      pdfContainer.style.position = 'absolute';
+      pdfContainer.style.left = '-9999px';
+      pdfContainer.style.top = '0';
+
+      // Capture the PDF content
+      const canvas = await html2canvas(pdfContainer, {
+        scale: 2,
+        backgroundColor: '#ffffff',
+        logging: false,
+        useCORS: true,
+        windowWidth: 800,
+      });
+
+      // Remove temporary element
+      document.body.removeChild(pdfContainer);
+
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a4'
+      });
+
+      const imgWidth = 190; // A4 width minus margins
+      const pageHeight = 277; // A4 height minus margins
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      let heightLeft = imgHeight;
+      let position = 0;
+
+      // Add first page
+      pdf.addImage(imgData, 'PNG', 10, position + 10, imgWidth, imgHeight);
+      heightLeft -= pageHeight;
+
+      // Add additional pages if needed
+      while (heightLeft > 0) {
+        position = heightLeft - imgHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, 'PNG', 10, position - 10, imgWidth, imgHeight);
+        heightLeft -= pageHeight;
+      }
+
+      // Add metadata to PDF
+      pdf.setProperties({
+        title: 'Landed Cost Report',
+        subject: 'Landed Cost Calculation',
+        author: 'Landed Cost Pro',
+        keywords: 'landed cost, shipping, products, logistics',
+        creator: 'Landed Cost Pro Dashboard'
+      });
+
+      // Save the PDF
+      const date = new Date();
+      const fileName = `landed-cost-report-${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}-${date.getDate().toString().padStart(2, '0')}.pdf`;
+      pdf.save(fileName);
+
+    } catch (error) {
+      console.error('Error generating PDF:', error);
+      alert('Failed to generate PDF. Please try again.');
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
   // Format currency
   const formatLKR = (value) => {
     return `LKR ${value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
@@ -88,7 +404,7 @@ export default function Home() {
   return (
     <div className="gradient-bg text-on-surface flex flex-col min-h-screen transition-all duration-700">
       {/* TopAppBar */}
-      <header className="bg-surface-container-lowest/80 backdrop-blur-md border-b border-border-muted w-full top-0 sticky z-50">
+      <header className="bg-surface-container-lowest/80 backdrop-blur-md border-b border-border-muted w-full top-0 sticky z-50 no-print">
         <div className="flex items-center justify-between px-margin-mobile md:px-margin-desktop h-16 w-full max-w-7xl mx-auto">
           <h1 className="font-headline-md text-headline-sm md:text-headline-md text-primary tracking-tight">Landed Cost Pro</h1>
           <div className="hidden md:flex gap-md items-center">
@@ -97,11 +413,23 @@ export default function Home() {
               Precision Finance Dashboard
             </span>
           </div>
+          <button 
+            onClick={downloadPDF}
+            disabled={isDownloading}
+            className="flex items-center gap-xs px-md py-2 bg-secondary text-on-secondary rounded-lg font-label-caps text-[12px] hover:bg-on-secondary-fixed-variant transition-all active:scale-95 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <span className="material-symbols-outlined text-[20px]">
+              {isDownloading ? 'hourglass_empty' : 'file_download'}
+            </span>
+            <span className="hidden sm:inline">
+              {isDownloading ? 'GENERATING...' : 'DOWNLOAD PDF'}
+            </span>
+          </button>
         </div>
       </header>
 
       {/* Main Content Area */}
-      <main className="flex-1 px-margin-mobile md:px-margin-desktop py-lg max-w-7xl mx-auto w-full">
+      <main className="flex-1 px-margin-mobile md:px-margin-desktop py-lg max-w-7xl mx-auto w-full pb-[180px]">
         <div className="flex flex-col lg:flex-row gap-lg items-start">
           {/* Sidebar: Shipping & Summary for Desktop */}
           <aside className="w-full lg:w-80 lg:sticky lg:top-24 space-y-lg order-1 lg:order-2 animate-slide-up" style={{ animationDelay: '0.1s' }}>
@@ -163,7 +491,7 @@ export default function Home() {
                 {products.length} {products.length === 1 ? 'ITEM' : 'ITEMS'}
               </span>
             </div>
-            <div className="space-y-md">
+            <div className="space-y-md mb-xl">
               {products.map((product, index) => (
                 <div
                   key={product.id}
@@ -209,7 +537,7 @@ export default function Home() {
                       </span>
                     </div>
                     <button
-                      className="text-error opacity-40 hover:opacity-100 hover:scale-110 p-1 self-end md:self-center transition-all"
+                      className="text-error opacity-40 hover:opacity-100 hover:scale-110 p-1 self-end md:self-center transition-all no-print"
                       onClick={() => removeProduct(product.id)}
                     >
                       <span className="material-symbols-outlined">delete</span>
@@ -219,7 +547,7 @@ export default function Home() {
               ))}
             </div>
             <button
-              className="w-full mt-lg h-14 bg-white/50 backdrop-blur-sm border-2 border-dashed border-outline-variant rounded-xl flex items-center justify-center gap-xs text-on-surface-variant hover:border-secondary hover:text-secondary hover:bg-white transition-all group animate-slide-up"
+              className="w-full mt-lg h-14 bg-white/50 backdrop-blur-sm border-2 border-dashed border-outline-variant rounded-xl flex items-center justify-center gap-xs text-on-surface-variant hover:border-secondary hover:text-secondary hover:bg-white transition-all group animate-slide-up no-print"
               onClick={addProduct}
               style={{ animationDelay: '0.4s' }}
             >
@@ -231,7 +559,7 @@ export default function Home() {
       </main>
 
       {/* Mobile Summary Sticky Section */}
-      <section className="lg:hidden fixed bottom-0 left-0 right-0 bg-secondary text-on-secondary p-md z-40 rounded-t-2xl shadow-[0_-8px_30px_rgba(0,0,0,0.12)] transform transition-transform duration-300">
+      <section className="lg:hidden fixed bottom-0 left-0 right-0 bg-secondary text-on-secondary p-md z-50 rounded-t-2xl shadow-[0_-8px_30px_rgba(0,0,0,0.12)] transform transition-transform duration-300 no-print">
         <div className="max-w-lg mx-auto">
           <div className="flex justify-between items-end">
             <div>
@@ -271,6 +599,16 @@ export default function Home() {
           </div>
         </div>
       </section>
+
+      {/* Loading Overlay for PDF Generation */}
+      {isDownloading && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] no-print">
+          <div className="bg-white rounded-xl p-8 flex flex-col items-center gap-4 shadow-2xl">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-secondary"></div>
+            <p className="font-body-md text-on-surface">Generating Professional PDF Report, please wait...</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
